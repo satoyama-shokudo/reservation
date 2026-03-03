@@ -51,7 +51,9 @@ export default function ReservePage() {
   const [selectedSlot, setSelectedSlot] = useState<SlotAvailability | null>(null);
   const [selectedTime, setSelectedTime] = useState("");
   const [specialOpenDays, setSpecialOpenDays] = useState<string[]>([]);
+  const [specialClosedDays, setSpecialClosedDays] = useState<string[]>([]);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
+  const [availabilityMessage, setAvailabilityMessage] = useState("");
 
   // Step 2: 席選択
   const [availableSeats, setAvailableSeats] = useState<SelectedSeat[]>([]);
@@ -67,7 +69,7 @@ export default function ReservePage() {
   const [submitting, setSubmitting] = useState(false);
   const [completed, setCompleted] = useState(false);
 
-  // 臨時営業日を取得
+  // 臨時営業日・臨時休業日を取得
   useEffect(() => {
     fetch("/api/special-open-days")
       .then((r) => r.json())
@@ -77,18 +79,30 @@ export default function ReservePage() {
         }
       })
       .catch(() => {});
+    fetch("/api/special-closed-days")
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setSpecialClosedDays(data.map((d: { date: string }) => d.date));
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // 日付・人数が変わったら空席を取得
   const fetchAvailability = useCallback(async () => {
     if (!selectedDate) return;
     setLoadingAvailability(true);
+    setAvailabilityMessage("");
     try {
       const res = await fetch(
         `/api/availability?date=${selectedDate}&guests=${guests}`
       );
       const data = await res.json();
       setAvailability(data.slots || []);
+      if (data.error && (!data.slots || data.slots.length === 0)) {
+        setAvailabilityMessage(data.error);
+      }
     } catch {
       setAvailability([]);
     } finally {
@@ -110,6 +124,7 @@ export default function ReservePage() {
     const max = getMaxDate();
     if (date < today || date > max) return false;
     if (isRegularHoliday(date) && !specialOpenDays.includes(dateStr)) return false;
+    if (specialClosedDays.includes(dateStr)) return false;
     if (isReservationClosed(dateStr)) return false;
     return true;
   }
@@ -363,6 +378,7 @@ export default function ReservePage() {
                   const isSelected = dateStr === selectedDate;
                   const isHoliday = isRegularHoliday(d);
                   const isSpecial = specialOpenDays.includes(dateStr);
+                  const isClosed = specialClosedDays.includes(dateStr);
                   const dayNum = d.getDate();
                   const dayOfWeek = d.getDay();
 
@@ -396,6 +412,11 @@ export default function ReservePage() {
                           営
                         </span>
                       )}
+                      {isClosed && (
+                        <span className="absolute bottom-0 left-1/2 -translate-x-1/2 text-[8px] text-red-400">
+                          休
+                        </span>
+                      )}
                     </button>
                   );
                 })}
@@ -409,7 +430,7 @@ export default function ReservePage() {
                   <p className="text-center text-warm-500 py-4">読み込み中...</p>
                 ) : availability.length === 0 ? (
                   <p className="text-center text-warm-500 py-4">
-                    この日は定休日です
+                    {availabilityMessage || "この日はご予約いただけません"}
                   </p>
                 ) : (
                   availability.map((slot) => (

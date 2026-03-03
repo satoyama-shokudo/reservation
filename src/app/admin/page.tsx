@@ -81,6 +81,7 @@ function AdminDashboard() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [specialOpenDays, setSpecialOpenDays] = useState<string[]>([]);
+  const [specialClosedDays, setSpecialClosedDays] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   const todayStr = formatDate(new Date());
@@ -88,16 +89,23 @@ function AdminDashboard() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [resReservations, resSpecial] = await Promise.all([
+      const [resReservations, resSpecial, resClosed] = await Promise.all([
         fetch(`/api/reservations?from=2020-01-01&to=2099-12-31`),
         fetch("/api/special-open-days"),
+        fetch("/api/special-closed-days"),
       ]);
       const reservationsData = await resReservations.json();
       const specialData = await resSpecial.json();
+      const closedData = await resClosed.json();
       setReservations(Array.isArray(reservationsData) ? reservationsData : []);
       setSpecialOpenDays(
         Array.isArray(specialData)
           ? specialData.map((d: { date: string }) => d.date)
+          : []
+      );
+      setSpecialClosedDays(
+        Array.isArray(closedData)
+          ? closedData.map((d: { date: string }) => d.date)
           : []
       );
     } catch {
@@ -183,6 +191,7 @@ function AdminDashboard() {
               <CalendarTab
                 reservations={confirmedReservations}
                 specialOpenDays={specialOpenDays}
+                specialClosedDays={specialClosedDays}
                 onUpdate={fetchData}
               />
             )}
@@ -269,10 +278,12 @@ function DashboardTab({
 function CalendarTab({
   reservations,
   specialOpenDays,
+  specialClosedDays,
   onUpdate,
 }: {
   reservations: Reservation[];
   specialOpenDays: string[];
+  specialClosedDays: string[];
   onUpdate: () => void;
 }) {
   const today = new Date();
@@ -308,6 +319,25 @@ function CalendarTab({
         await fetch(`/api/special-open-days/${dateStr}`, { method: "DELETE" });
       } else {
         await fetch("/api/special-open-days", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ date: dateStr }),
+        });
+      }
+      onUpdate();
+    } finally {
+      setToggling(false);
+    }
+  }
+
+  async function toggleClosedDay(dateStr: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    setToggling(true);
+    try {
+      if (specialClosedDays.includes(dateStr)) {
+        await fetch(`/api/special-closed-days/${dateStr}`, { method: "DELETE" });
+      } else {
+        await fetch("/api/special-closed-days", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ date: dateStr }),
@@ -378,9 +408,12 @@ function CalendarTab({
             const d = parseDate(dateStr);
             const isHoliday = isRegularHoliday(d);
             const isSpecial = specialOpenDays.includes(dateStr);
+            const isClosed = specialClosedDays.includes(dateStr);
             const count = getReservationCount(dateStr);
             const dayOfWeek = d.getDay();
             const isSelected = dateStr === selectedDate;
+            // 営業日（定休日でないか、臨時営業日）
+            const isBusinessDay = !isHoliday || isSpecial;
 
             return (
               <div
@@ -389,6 +422,8 @@ function CalendarTab({
                 className={`p-2 rounded-lg text-center min-h-[60px] cursor-pointer transition-colors ${
                   isSelected
                     ? "bg-green-100 border-2 border-green-500 ring-1 ring-green-300"
+                    : isClosed
+                    ? "bg-red-50 border border-red-300 hover:bg-red-100"
                     : isHoliday && !isSpecial
                     ? "bg-warm-100 hover:bg-warm-200"
                     : isSpecial
@@ -412,6 +447,7 @@ function CalendarTab({
                     {count}件
                   </div>
                 )}
+                {/* 定休日（火水）の臨時営業トグル */}
                 {isHoliday && (
                   <button
                     onClick={(e) => toggleSpecialDay(dateStr, e)}
@@ -425,6 +461,20 @@ function CalendarTab({
                     {isSpecial ? "臨時営業" : "定休日"}
                   </button>
                 )}
+                {/* 営業日の臨時休業トグル */}
+                {isBusinessDay && !isHoliday && (
+                  <button
+                    onClick={(e) => toggleClosedDay(dateStr, e)}
+                    disabled={toggling}
+                    className={`text-[10px] mt-1 px-1 py-0.5 rounded ${
+                      isClosed
+                        ? "bg-red-500 text-white hover:bg-red-600"
+                        : "bg-warm-200 text-warm-500 hover:bg-warm-300"
+                    }`}
+                  >
+                    {isClosed ? "臨時休業" : "休業設定"}
+                  </button>
+                )}
               </div>
             );
           })}
@@ -432,7 +482,7 @@ function CalendarTab({
       </div>
 
       <p className="text-xs text-warm-400 mt-3">
-        火曜・水曜の「定休日」ボタンを押すと臨時営業に切り替えられます。日付をクリックするとタイムラインを表示します。
+        火曜・水曜の「定休日」→臨時営業に切替可。営業日の「休業設定」→臨時休業に切替可。日付クリックでタイムライン表示。
       </p>
 
       {/* タイムラインビュー */}

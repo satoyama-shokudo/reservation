@@ -26,6 +26,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "予約受付は前日の22時までです", slots: [] }, { status: 200 });
   }
 
+  // 臨時休業日チェック
+  const { data: closedDays } = await supabase
+    .from("special_closed_days")
+    .select("date")
+    .eq("date", dateStr);
+
+  if (closedDays && closedDays.length > 0) {
+    return NextResponse.json({ error: "臨時休業日です", slots: [] }, { status: 200 });
+  }
+
   // 定休日チェック（臨時営業日なら営業）
   if (isRegularHoliday(date)) {
     const { data: specialDays } = await supabase
