@@ -5,6 +5,7 @@ import {
   formatDate,
   parseDate,
   isRegularHoliday,
+  isWeekend,
   getDayLabel,
 } from "@/lib/slots";
 import type { Reservation } from "@/lib/availability";
@@ -279,6 +280,7 @@ function CalendarTab({
     `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`
   );
   const [toggling, setToggling] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   function generateCalendarDays(yearMonth: string) {
     const [y, m] = yearMonth.split("-").map(Number);
@@ -298,7 +300,8 @@ function CalendarTab({
     return reservations.filter((r) => r.date === date).length;
   }
 
-  async function toggleSpecialDay(dateStr: string) {
+  async function toggleSpecialDay(dateStr: string, e: React.MouseEvent) {
+    e.stopPropagation();
     setToggling(true);
     try {
       if (specialOpenDays.includes(dateStr)) {
@@ -315,6 +318,10 @@ function CalendarTab({
       setToggling(false);
     }
   }
+
+  const selectedDateReservations = selectedDate
+    ? reservations.filter((r) => r.date === selectedDate)
+    : [];
 
   return (
     <div>
@@ -373,16 +380,20 @@ function CalendarTab({
             const isSpecial = specialOpenDays.includes(dateStr);
             const count = getReservationCount(dateStr);
             const dayOfWeek = d.getDay();
+            const isSelected = dateStr === selectedDate;
 
             return (
               <div
                 key={dateStr}
-                className={`p-2 rounded-lg text-center min-h-[60px] ${
-                  isHoliday && !isSpecial
-                    ? "bg-warm-100"
+                onClick={() => setSelectedDate(dateStr === selectedDate ? null : dateStr)}
+                className={`p-2 rounded-lg text-center min-h-[60px] cursor-pointer transition-colors ${
+                  isSelected
+                    ? "bg-green-100 border-2 border-green-500 ring-1 ring-green-300"
+                    : isHoliday && !isSpecial
+                    ? "bg-warm-100 hover:bg-warm-200"
                     : isSpecial
-                    ? "bg-green-50 border border-green-300"
-                    : "bg-white border border-warm-100"
+                    ? "bg-green-50 border border-green-300 hover:bg-green-100"
+                    : "bg-white border border-warm-100 hover:bg-warm-50"
                 }`}
               >
                 <div
@@ -403,7 +414,7 @@ function CalendarTab({
                 )}
                 {isHoliday && (
                   <button
-                    onClick={() => toggleSpecialDay(dateStr)}
+                    onClick={(e) => toggleSpecialDay(dateStr, e)}
                     disabled={toggling}
                     className={`text-[10px] mt-1 px-1 py-0.5 rounded ${
                       isSpecial
@@ -421,8 +432,339 @@ function CalendarTab({
       </div>
 
       <p className="text-xs text-warm-400 mt-3">
-        火曜・水曜の「定休日」ボタンを押すと臨時営業に切り替えられます
+        火曜・水曜の「定休日」ボタンを押すと臨時営業に切り替えられます。日付をクリックするとタイムラインを表示します。
       </p>
+
+      {/* タイムラインビュー */}
+      {selectedDate && (
+        <TimelineView
+          date={selectedDate}
+          reservations={selectedDateReservations}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ===== タイムラインビュー ===== */
+
+const TIMELINE_SEATS = [
+  { id: "counter", label: "カウンター", rowIndex: 0 },
+  { id: "table2a", label: "2名席A", rowIndex: 1 },
+  { id: "table2b", label: "2名席B", rowIndex: 2 },
+  { id: "table4", label: "4名席", rowIndex: 3 },
+  { id: "table6", label: "6名席", rowIndex: 4 },
+];
+
+const ROW_HEIGHT = 48;
+const SEAT_LABEL_WIDTH = 80;
+
+function timeToMinutes(time: string): number {
+  const [h, m] = time.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function TimelineView({
+  date,
+  reservations,
+}: {
+  date: string;
+  reservations: Reservation[];
+}) {
+  const [popupReservation, setPopupReservation] = useState<Reservation | null>(null);
+
+  const d = parseDate(date);
+  const isWknd = isWeekend(d);
+
+  // 平日: 11:30〜15:00 / 土日祝: 9:00〜17:00
+  const timelineStartMin = isWknd ? timeToMinutes("09:00") : timeToMinutes("11:30");
+  const timelineEndMin = isWknd ? timeToMinutes("17:00") : timeToMinutes("15:00");
+  const totalMinutes = timelineEndMin - timelineStartMin;
+
+  // 時間ラベル（1時間刻み）
+  const hourLabels: { label: string; offsetPct: number }[] = [];
+  const firstHour = Math.ceil(timelineStartMin / 60);
+  const lastHour = Math.floor(timelineEndMin / 60);
+  for (let h = firstHour; h <= lastHour; h++) {
+    const min = h * 60;
+    if (min >= timelineStartMin && min <= timelineEndMin) {
+      hourLabels.push({
+        label: `${h}:00`,
+        offsetPct: ((min - timelineStartMin) / totalMinutes) * 100,
+      });
+    }
+  }
+
+  // 30分刻みの補助線
+  const gridLines: number[] = [];
+  for (let m = timelineStartMin; m <= timelineEndMin; m += 30) {
+    gridLines.push(((m - timelineStartMin) / totalMinutes) * 100);
+  }
+
+  const confirmedReservations = reservations.filter((r) => r.status === "confirmed");
+
+  // 予約ブロックの位置計算
+  function getBlockStyle(r: Reservation) {
+    const startMin = timeToMinutes(r.start_time);
+    const endMin = timeToMinutes(r.end_time);
+    const leftPct = ((startMin - timelineStartMin) / totalMinutes) * 100;
+    const widthPct = ((endMin - startMin) / totalMinutes) * 100;
+    return { left: `${leftPct}%`, width: `${widthPct}%` };
+  }
+
+  // 結合席かどうか
+  function isCombined(r: Reservation): boolean {
+    return r.seat_type === "combined" || r.seat_id === "table2ab";
+  }
+
+  // 各予約をどの行に表示するか決定
+  function getRowsForReservation(r: Reservation): number[] {
+    if (isCombined(r)) {
+      // table2a (row 1) と table2b (row 2) にまたがる
+      return [1, 2];
+    }
+    const seat = TIMELINE_SEATS.find((s) => s.id === r.seat_id);
+    return seat ? [seat.rowIndex] : [];
+  }
+
+  // ブロックの色
+  const BLOCK_COLORS = [
+    "bg-green-500",
+    "bg-green-600",
+    "bg-green-400",
+    "bg-warm-500",
+    "bg-warm-400",
+  ];
+
+  return (
+    <div className="mt-6">
+      <h3
+        className="text-lg font-bold text-warm-800 mb-3"
+        style={{ fontFamily: "var(--font-serif)" }}
+      >
+        {date} ({getDayLabel(d)}) のタイムライン
+      </h3>
+
+      <div className="bg-white rounded-xl shadow-sm p-4 overflow-x-auto">
+        <div className="min-w-[600px]">
+          {/* 時間ラベル */}
+          <div className="flex" style={{ marginLeft: SEAT_LABEL_WIDTH }}>
+            <div className="relative w-full h-6">
+              {hourLabels.map((h) => (
+                <span
+                  key={h.label}
+                  className="absolute text-xs text-warm-500 -translate-x-1/2"
+                  style={{ left: `${h.offsetPct}%` }}
+                >
+                  {h.label}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* タイムライングリッド + 予約ブロック */}
+          <div className="relative">
+            {TIMELINE_SEATS.map((seat, rowIdx) => (
+              <div key={seat.id} className="flex items-stretch" style={{ height: ROW_HEIGHT }}>
+                {/* 席ラベル */}
+                <div
+                  className="shrink-0 flex items-center justify-end pr-3 text-xs font-medium text-warm-700"
+                  style={{ width: SEAT_LABEL_WIDTH }}
+                >
+                  {seat.label}
+                </div>
+                {/* グリッド領域 */}
+                <div className="relative flex-1 border-b border-warm-100">
+                  {/* 補助線 */}
+                  {gridLines.map((pct, i) => (
+                    <div
+                      key={i}
+                      className="absolute top-0 bottom-0 border-l border-warm-100"
+                      style={{ left: `${pct}%` }}
+                    />
+                  ))}
+                  {/* 時間帯の背景 */}
+                  <div className="absolute inset-0 bg-warm-50 opacity-30" />
+
+                  {/* 予約ブロック */}
+                  {confirmedReservations
+                    .filter((r) => {
+                      const rows = getRowsForReservation(r);
+                      return rows.includes(rowIdx);
+                    })
+                    .map((r, blockIdx) => {
+                      const style = getBlockStyle(r);
+                      const combined = isCombined(r);
+                      const rows = getRowsForReservation(r);
+                      const isTopOfCombined = combined && rowIdx === rows[0];
+                      const isBottomOfCombined = combined && rowIdx === rows[rows.length - 1];
+
+                      return (
+                        <div
+                          key={r.id}
+                          onClick={() => setPopupReservation(r)}
+                          className={`absolute cursor-pointer transition-opacity hover:opacity-90 ${
+                            BLOCK_COLORS[blockIdx % BLOCK_COLORS.length]
+                          } text-white shadow-sm ${
+                            combined
+                              ? isTopOfCombined
+                                ? "rounded-t-md border-b-0"
+                                : isBottomOfCombined
+                                ? "rounded-b-md border-t-0"
+                                : ""
+                              : "rounded-md"
+                          }`}
+                          style={{
+                            ...style,
+                            top: combined && !isTopOfCombined ? 0 : 4,
+                            bottom: combined && !isBottomOfCombined ? 0 : 4,
+                            zIndex: 10,
+                          }}
+                        >
+                          {/* 結合席は上段のみテキスト表示 */}
+                          {(!combined || isTopOfCombined) && (
+                            <div className="px-1.5 py-0.5 truncate">
+                              <span className="text-xs font-bold">{r.name}</span>
+                              <span className="text-[10px] ml-1 opacity-80">{r.guests}名</span>
+                            </div>
+                          )}
+                          {combined && isBottomOfCombined && (
+                            <div className="px-1.5 py-0.5">
+                              <span className="text-[10px] opacity-70">結合席</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 下部時間ラベル */}
+          <div className="flex" style={{ marginLeft: SEAT_LABEL_WIDTH }}>
+            <div className="relative w-full h-6">
+              {hourLabels.map((h) => (
+                <span
+                  key={h.label}
+                  className="absolute text-xs text-warm-400 -translate-x-1/2"
+                  style={{ left: `${h.offsetPct}%` }}
+                >
+                  {h.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {confirmedReservations.length === 0 && (
+          <p className="text-center text-warm-400 text-sm py-4">
+            この日の予約はありません
+          </p>
+        )}
+      </div>
+
+      {/* 予約詳細ポップアップ */}
+      {popupReservation && (
+        <ReservationPopup
+          reservation={popupReservation}
+          onClose={() => setPopupReservation(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ReservationPopup({
+  reservation: r,
+  onClose,
+}: {
+  reservation: Reservation;
+  onClose: () => void;
+}) {
+  const d = parseDate(r.date);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div className="absolute inset-0 bg-black/30" />
+      <div
+        className="relative bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          onClick={onClose}
+          className="absolute top-3 right-3 text-warm-400 hover:text-warm-700 text-lg"
+        >
+          ✕
+        </button>
+        <h4
+          className="text-lg font-bold text-warm-800 mb-4"
+          style={{ fontFamily: "var(--font-serif)" }}
+        >
+          予約詳細
+        </h4>
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between">
+            <span className="text-warm-500">お名前</span>
+            <span className="font-bold text-warm-800">{r.name}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-warm-500">日時</span>
+            <span className="text-warm-800">
+              {r.date} ({getDayLabel(d)})
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-warm-500">時間</span>
+            <span className="text-warm-800">
+              {r.start_time}〜{r.end_time}（{r.slot_label}）
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-warm-500">人数</span>
+            <span className="text-warm-800">{r.guests}名</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-warm-500">お席</span>
+            <span className="text-warm-800">
+              {r.seat_label}
+              {r.seat_type === "combined" && (
+                <span className="ml-1 text-xs bg-warm-200 text-warm-600 px-1 py-0.5 rounded">
+                  結合
+                </span>
+              )}
+            </span>
+          </div>
+          <hr className="border-warm-200" />
+          <div className="flex justify-between">
+            <span className="text-warm-500">電話番号</span>
+            <span className="text-warm-800">{r.phone}</span>
+          </div>
+          {r.email && (
+            <div className="flex justify-between">
+              <span className="text-warm-500">メール</span>
+              <span className="text-warm-800">{r.email}</span>
+            </div>
+          )}
+          {r.note && (
+            <div>
+              <span className="text-warm-500">備考</span>
+              <p className="text-warm-800 mt-1 bg-warm-50 rounded-lg p-2">
+                {r.note}
+              </p>
+            </div>
+          )}
+        </div>
+        <button
+          onClick={onClose}
+          className="mt-5 w-full bg-warm-100 hover:bg-warm-200 text-warm-700 font-medium py-2 rounded-lg transition-colors text-sm"
+        >
+          閉じる
+        </button>
+      </div>
     </div>
   );
 }
