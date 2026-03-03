@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   formatDate,
   parseDate,
@@ -83,11 +83,15 @@ function AdminDashboard() {
   const [specialOpenDays, setSpecialOpenDays] = useState<string[]>([]);
   const [specialClosedDays, setSpecialClosedDays] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const initialLoadDone = React.useRef(false);
 
   const todayStr = formatDate(new Date());
 
   const fetchData = useCallback(async () => {
-    setLoading(true);
+    // 初回のみローディング表示（再取得時はコンポーネントをアンマウントしない）
+    if (!initialLoadDone.current) {
+      setLoading(true);
+    }
     try {
       const [resReservations, resSpecial, resClosed] = await Promise.all([
         fetch(`/api/reservations?from=2020-01-01&to=2099-12-31`),
@@ -112,6 +116,7 @@ function AdminDashboard() {
       // ignore
     } finally {
       setLoading(false);
+      initialLoadDone.current = true;
     }
   }, []);
 
@@ -315,16 +320,24 @@ function CalendarTab({
     e.stopPropagation();
     setToggling(true);
     try {
+      let res: Response;
       if (specialOpenDays.includes(dateStr)) {
-        await fetch(`/api/special-open-days/${dateStr}`, { method: "DELETE" });
+        res = await fetch(`/api/special-open-days/${dateStr}`, { method: "DELETE" });
       } else {
-        await fetch("/api/special-open-days", {
+        res = await fetch("/api/special-open-days", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ date: dateStr }),
         });
       }
-      onUpdate();
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error || "臨時営業の設定に失敗しました");
+        return;
+      }
+      await onUpdate();
+    } catch {
+      alert("通信エラーが発生しました");
     } finally {
       setToggling(false);
     }
@@ -334,16 +347,24 @@ function CalendarTab({
     e.stopPropagation();
     setToggling(true);
     try {
+      let res: Response;
       if (specialClosedDays.includes(dateStr)) {
-        await fetch(`/api/special-closed-days/${dateStr}`, { method: "DELETE" });
+        res = await fetch(`/api/special-closed-days/${dateStr}`, { method: "DELETE" });
       } else {
-        await fetch("/api/special-closed-days", {
+        res = await fetch("/api/special-closed-days", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ date: dateStr }),
         });
       }
-      onUpdate();
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error || "臨時休業の設定に失敗しました");
+        return;
+      }
+      await onUpdate();
+    } catch {
+      alert("通信エラーが発生しました");
     } finally {
       setToggling(false);
     }
