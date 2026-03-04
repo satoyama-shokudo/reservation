@@ -383,7 +383,7 @@ function CalendarTab({
         カレンダー
       </h2>
 
-      <div className="bg-white rounded-xl shadow-sm p-6">
+      <div className="bg-white rounded-xl shadow-sm p-3 sm:p-6">
         <div className="flex items-center justify-between mb-4">
           <button
             onClick={() => {
@@ -394,11 +394,11 @@ function CalendarTab({
                   : `${y}-${String(m - 1).padStart(2, "0")}`
               );
             }}
-            className="text-warm-600 hover:text-warm-800 px-3 py-1"
+            className="text-warm-600 hover:text-warm-800 px-2 sm:px-3 py-1 text-sm sm:text-base"
           >
             ◀ 前月
           </button>
-          <span className="text-lg font-bold text-warm-800">
+          <span className="text-base sm:text-lg font-bold text-warm-800">
             {calendarMonth.replace("-", "年")}月
           </span>
           <button
@@ -410,7 +410,7 @@ function CalendarTab({
                   : `${y}-${String(m + 1).padStart(2, "0")}`
               );
             }}
-            className="text-warm-600 hover:text-warm-800 px-3 py-1"
+            className="text-warm-600 hover:text-warm-800 px-2 sm:px-3 py-1 text-sm sm:text-base"
           >
             次月 ▶
           </button>
@@ -440,7 +440,7 @@ function CalendarTab({
               <div
                 key={dateStr}
                 onClick={() => setSelectedDate(dateStr === selectedDate ? null : dateStr)}
-                className={`p-2 rounded-lg text-center min-h-[60px] cursor-pointer transition-colors ${
+                className={`p-1 sm:p-2 rounded-lg text-center min-h-[52px] sm:min-h-[60px] cursor-pointer transition-colors ${
                   isSelected
                     ? "bg-green-100 border-2 border-green-500 ring-1 ring-green-300"
                     : isClosed
@@ -453,7 +453,7 @@ function CalendarTab({
                 }`}
               >
                 <div
-                  className={`text-sm font-medium ${
+                  className={`text-xs sm:text-sm font-medium ${
                     dayOfWeek === 0
                       ? "text-red-500"
                       : dayOfWeek === 6
@@ -464,7 +464,7 @@ function CalendarTab({
                   {d.getDate()}
                 </div>
                 {count > 0 && (
-                  <div className="text-xs text-green-600 font-bold">
+                  <div className="text-[10px] sm:text-xs text-green-600 font-bold">
                     {count}件
                   </div>
                 )}
@@ -473,13 +473,14 @@ function CalendarTab({
                   <button
                     onClick={(e) => toggleSpecialDay(dateStr, e)}
                     disabled={toggling}
-                    className={`text-[10px] mt-1 px-1 py-0.5 rounded ${
+                    className={`text-[9px] sm:text-[10px] leading-tight mt-0.5 sm:mt-1 px-0.5 sm:px-1 py-0.5 rounded w-full ${
                       isSpecial
                         ? "bg-green-600 text-white hover:bg-green-700"
                         : "bg-warm-300 text-white hover:bg-warm-400"
                     }`}
                   >
-                    {isSpecial ? "臨時営業" : "定休日"}
+                    <span className="sm:hidden">{isSpecial ? "営業" : "定休"}</span>
+                    <span className="hidden sm:inline">{isSpecial ? "臨時営業" : "定休日"}</span>
                   </button>
                 )}
                 {/* 営業日の臨時休業トグル */}
@@ -487,13 +488,14 @@ function CalendarTab({
                   <button
                     onClick={(e) => toggleClosedDay(dateStr, e)}
                     disabled={toggling}
-                    className={`text-[10px] mt-1 px-1 py-0.5 rounded ${
+                    className={`text-[9px] sm:text-[10px] leading-tight mt-0.5 sm:mt-1 px-0.5 sm:px-1 py-0.5 rounded w-full ${
                       isClosed
                         ? "bg-red-500 text-white hover:bg-red-600"
                         : "bg-warm-200 text-warm-500 hover:bg-warm-300"
                     }`}
                   >
-                    {isClosed ? "臨時休業" : "休業設定"}
+                    <span className="sm:hidden">{isClosed ? "休業" : "休業"}</span>
+                    <span className="hidden sm:inline">{isClosed ? "臨時休業" : "休業設定"}</span>
                   </button>
                 )}
               </div>
