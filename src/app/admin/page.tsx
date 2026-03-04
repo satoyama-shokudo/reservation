@@ -433,8 +433,6 @@ function CalendarTab({
             const count = getReservationCount(dateStr);
             const dayOfWeek = d.getDay();
             const isSelected = dateStr === selectedDate;
-            // 営業日（定休日でないか、臨時営業日）
-            const isBusinessDay = !isHoliday || isSpecial;
 
             return (
               <div
@@ -473,29 +471,27 @@ function CalendarTab({
                   <button
                     onClick={(e) => toggleSpecialDay(dateStr, e)}
                     disabled={toggling}
-                    className={`text-[9px] sm:text-[10px] leading-tight mt-0.5 sm:mt-1 px-0.5 sm:px-1 py-0.5 rounded w-full ${
+                    className={`text-[10px] leading-tight mt-0.5 sm:mt-1 px-1 py-0.5 rounded w-full ${
                       isSpecial
                         ? "bg-green-600 text-white hover:bg-green-700"
                         : "bg-warm-300 text-white hover:bg-warm-400"
                     }`}
                   >
-                    <span className="sm:hidden">{isSpecial ? "営業" : "定休"}</span>
-                    <span className="hidden sm:inline">{isSpecial ? "臨時営業" : "定休日"}</span>
+                    {isSpecial ? "臨営" : "定休"}
                   </button>
                 )}
                 {/* 営業日の臨時休業トグル */}
-                {isBusinessDay && !isHoliday && (
+                {!isHoliday && (
                   <button
                     onClick={(e) => toggleClosedDay(dateStr, e)}
                     disabled={toggling}
-                    className={`text-[9px] sm:text-[10px] leading-tight mt-0.5 sm:mt-1 px-0.5 sm:px-1 py-0.5 rounded w-full ${
+                    className={`text-[10px] leading-tight mt-0.5 sm:mt-1 px-1 py-0.5 rounded w-full ${
                       isClosed
                         ? "bg-red-500 text-white hover:bg-red-600"
                         : "bg-warm-200 text-warm-500 hover:bg-warm-300"
                     }`}
                   >
-                    <span className="sm:hidden">{isClosed ? "休業" : "休業"}</span>
-                    <span className="hidden sm:inline">{isClosed ? "臨時休業" : "休業設定"}</span>
+                    {isClosed ? "臨休" : "営業"}
                   </button>
                 )}
               </div>
