@@ -57,3 +57,15 @@ CREATE POLICY "Allow all access to special_open_days" ON special_open_days
 
 CREATE POLICY "Allow all access to special_closed_days" ON special_closed_days
   FOR ALL USING (true) WITH CHECK (true);
+
+-- 管理者設定テーブル（パスワードハッシュ保存用）
+CREATE TABLE IF NOT EXISTS admin_settings (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  password_hash TEXT NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE admin_settings ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow all access to admin_settings" ON admin_settings
+  FOR ALL USING (true) WITH CHECK (true);

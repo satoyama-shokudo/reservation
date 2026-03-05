@@ -10,7 +10,7 @@ import {
 } from "@/lib/slots";
 import type { Reservation } from "@/lib/availability";
 
-type Tab = "dashboard" | "calendar" | "reservations";
+type Tab = "dashboard" | "calendar" | "reservations" | "settings";
 type Filter = "all" | "upcoming" | "past" | "cancelled";
 
 export default function AdminPage() {
@@ -138,6 +138,7 @@ function AdminDashboard() {
     { id: "dashboard", label: "ダッシュボード" },
     { id: "calendar", label: "カレンダー" },
     { id: "reservations", label: "予約一覧" },
+    { id: "settings", label: "設定" },
   ];
 
   return (
@@ -207,6 +208,7 @@ function AdminDashboard() {
                 onUpdate={fetchData}
               />
             )}
+            {tab === "settings" && <SettingsTab />}
           </>
         )}
       </div>
@@ -920,6 +922,120 @@ function ReservationsTab({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function SettingsTab() {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handlePasswordChange(e: React.FormEvent) {
+    e.preventDefault();
+    setMessage("");
+    setError("");
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setError("すべての項目を入力してください");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setError("新しいパスワードは8文字以上にしてください");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError("新しいパスワードが一致しません");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/auth/password", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMessage("パスワードを変更しました");
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+      } else {
+        setError(data.error || "パスワードの変更に失敗しました");
+      }
+    } catch {
+      setError("通信エラーが発生しました");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div>
+      <h2
+        className="text-xl font-bold text-warm-800 mb-6"
+        style={{ fontFamily: "var(--font-serif)" }}
+      >
+        設定
+      </h2>
+
+      <div className="bg-white rounded-xl shadow-sm p-6 max-w-md">
+        <h3 className="text-lg font-bold text-warm-800 mb-4">
+          パスワード変更
+        </h3>
+        <form onSubmit={handlePasswordChange} className="space-y-4">
+          <div>
+            <label className="block text-sm text-warm-600 mb-1">
+              現在のパスワード
+            </label>
+            <input
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              className="w-full border border-warm-300 rounded-lg px-4 py-2 focus:outline-none focus:border-green-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-warm-600 mb-1">
+              新しいパスワード
+            </label>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className="w-full border border-warm-300 rounded-lg px-4 py-2 focus:outline-none focus:border-green-500"
+            />
+            <p className="text-xs text-warm-400 mt-1">8文字以上</p>
+          </div>
+          <div>
+            <label className="block text-sm text-warm-600 mb-1">
+              新しいパスワード（確認）
+            </label>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              className="w-full border border-warm-300 rounded-lg px-4 py-2 focus:outline-none focus:border-green-500"
+            />
+          </div>
+
+          {error && <p className="text-red-500 text-sm">{error}</p>}
+          {message && <p className="text-green-600 text-sm">{message}</p>}
+
+          <button
+            type="submit"
+            disabled={submitting}
+            className="w-full bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white font-medium py-2 rounded-lg transition-colors"
+          >
+            {submitting ? "変更中..." : "パスワードを変更"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
