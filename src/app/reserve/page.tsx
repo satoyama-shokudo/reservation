@@ -44,7 +44,7 @@ export default function ReservePage() {
   // Step 2: お客様情報
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
+
   const [note, setNote] = useState("");
 
   // Step 3: 確認・完了
@@ -189,7 +189,7 @@ export default function ReservePage() {
           guests,
           name,
           phone,
-          email: email || null,
+
           note: note || null,
         }),
       });
@@ -537,18 +537,6 @@ export default function ReservePage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-warm-700 mb-1">
-                  メールアドレス
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="example@email.com"
-                  className="w-full border border-warm-300 rounded-lg px-4 py-2 focus:outline-none focus:border-green-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-warm-700 mb-1">
                   備考
                 </label>
                 <textarea
@@ -621,12 +609,6 @@ export default function ReservePage() {
                 <span className="text-warm-500">電話番号</span>
                 <span className="font-medium text-warm-800">{phone}</span>
               </div>
-              {email && (
-                <div className="flex justify-between">
-                  <span className="text-warm-500">メール</span>
-                  <span className="font-medium text-warm-800">{email}</span>
-                </div>
-              )}
               {note && (
                 <div className="flex justify-between">
                   <span className="text-warm-500">備考</span>

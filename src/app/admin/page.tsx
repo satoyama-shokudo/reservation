@@ -1244,12 +1244,6 @@ function ReservationPopup({
             <span className="text-warm-500">電話番号</span>
             <span className="text-warm-800">{r.phone}</span>
           </div>
-          {r.email && (
-            <div className="flex justify-between">
-              <span className="text-warm-500">メール</span>
-              <span className="text-warm-800">{r.email}</span>
-            </div>
-          )}
           {r.note && (
             <div>
               <span className="text-warm-500">備考</span>
