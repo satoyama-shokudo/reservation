@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS reservations (
   email VARCHAR(100),
   note TEXT,
   status VARCHAR(20) DEFAULT 'confirmed',
+  auto_moved BOOLEAN DEFAULT false,
+  original_seat_id VARCHAR(20),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -62,10 +64,28 @@ CREATE POLICY "Allow all access to special_closed_days" ON special_closed_days
 CREATE TABLE IF NOT EXISTS admin_settings (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   password_hash TEXT NOT NULL,
+  max_guests_per_slot INTEGER NOT NULL DEFAULT 10,
+  max_guests_per_group INTEGER NOT NULL DEFAULT 8,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 予約ブロックテーブル（特定の席・時間帯の予約受付を停止）
+CREATE TABLE IF NOT EXISTS reservation_blocks (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  date DATE NOT NULL,
+  seat_id VARCHAR(20),
+  start_time VARCHAR(10) NOT NULL,
+  end_time VARCHAR(10) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_reservation_blocks_date ON reservation_blocks(date);
+
 ALTER TABLE admin_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reservation_blocks ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Allow all access to admin_settings" ON admin_settings
+  FOR ALL USING (true) WITH CHECK (true);
+
+CREATE POLICY "Allow all access to reservation_blocks" ON reservation_blocks
   FOR ALL USING (true) WITH CHECK (true);

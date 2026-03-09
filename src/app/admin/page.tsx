@@ -8,10 +8,51 @@ import {
   isWeekend,
   getDayLabel,
 } from "@/lib/slots";
+import { SEATS } from "@/lib/seats";
 import type { Reservation } from "@/lib/availability";
+
+interface Block {
+  id: string;
+  date: string;
+  seat_id: string | null;
+  start_time: string;
+  end_time: string;
+  created_at: string;
+}
 
 type Tab = "dashboard" | "calendar" | "reservations" | "settings";
 type Filter = "all" | "upcoming" | "past" | "cancelled";
+
+/* ===== Physical seats for timeline rows ===== */
+const TIMELINE_SEATS = [
+  { id: "counter", label: "C2", rowIndex: 0 },
+  { id: "table2a", label: "T2a", rowIndex: 1 },
+  { id: "table2b", label: "T2b", rowIndex: 2 },
+  { id: "table4", label: "T4", rowIndex: 3 },
+  { id: "table6", label: "T6", rowIndex: 4 },
+];
+
+const ROW_HEIGHT = 48;
+const SEAT_LABEL_WIDTH = 80;
+
+function timeToMinutes(time: string): number {
+  const [h, m] = time.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function doTimesOverlap(
+  startA: string,
+  endA: string,
+  startB: string,
+  endB: string
+): boolean {
+  return (
+    timeToMinutes(startA) < timeToMinutes(endB) &&
+    timeToMinutes(startB) < timeToMinutes(endA)
+  );
+}
+
+/* ===== Login + Root ===== */
 
 export default function AdminPage() {
   const [authenticated, setAuthenticated] = useState(false);
@@ -77,9 +118,12 @@ export default function AdminPage() {
   return <AdminDashboard />;
 }
 
+/* ===== Dashboard Shell ===== */
+
 function AdminDashboard() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [blocks, setBlocks] = useState<Block[]>([]);
   const [specialOpenDays, setSpecialOpenDays] = useState<string[]>([]);
   const [specialClosedDays, setSpecialClosedDays] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -88,20 +132,24 @@ function AdminDashboard() {
   const todayStr = formatDate(new Date());
 
   const fetchData = useCallback(async () => {
-    // 初回のみローディング表示（再取得時はコンポーネントをアンマウントしない）
     if (!initialLoadDone.current) {
       setLoading(true);
     }
     try {
-      const [resReservations, resSpecial, resClosed] = await Promise.all([
-        fetch(`/api/reservations?from=2020-01-01&to=2099-12-31`),
-        fetch("/api/special-open-days"),
-        fetch("/api/special-closed-days"),
-      ]);
+      const [resReservations, resSpecial, resClosed, resBlocks] =
+        await Promise.all([
+          fetch(`/api/reservations?from=2020-01-01&to=2099-12-31`),
+          fetch("/api/special-open-days"),
+          fetch("/api/special-closed-days"),
+          fetch("/api/reservation-blocks"),
+        ]);
       const reservationsData = await resReservations.json();
       const specialData = await resSpecial.json();
       const closedData = await resClosed.json();
-      setReservations(Array.isArray(reservationsData) ? reservationsData : []);
+      const blocksData = await resBlocks.json();
+      setReservations(
+        Array.isArray(reservationsData) ? reservationsData : []
+      );
       setSpecialOpenDays(
         Array.isArray(specialData)
           ? specialData.map((d: { date: string }) => d.date)
@@ -112,6 +160,7 @@ function AdminDashboard() {
           ? closedData.map((d: { date: string }) => d.date)
           : []
       );
+      setBlocks(Array.isArray(blocksData) ? blocksData : []);
     } catch {
       // ignore
     } finally {
@@ -190,12 +239,16 @@ function AdminDashboard() {
                 todayReservations={todayReservations}
                 upcomingReservations={upcomingReservations}
                 totalReservations={confirmedReservations}
+                allReservations={reservations}
                 todayStr={todayStr}
+                onUpdate={fetchData}
               />
             )}
             {tab === "calendar" && (
               <CalendarTab
                 reservations={confirmedReservations}
+                allReservations={reservations}
+                blocks={blocks}
                 specialOpenDays={specialOpenDays}
                 specialClosedDays={specialClosedDays}
                 onUpdate={fetchData}
@@ -216,18 +269,27 @@ function AdminDashboard() {
   );
 }
 
+/* ===== Dashboard Tab ===== */
+
 function DashboardTab({
   todayReservations,
   upcomingReservations,
   totalReservations,
+  allReservations,
   todayStr,
+  onUpdate,
 }: {
   todayReservations: Reservation[];
   upcomingReservations: Reservation[];
   totalReservations: Reservation[];
+  allReservations: Reservation[];
   todayStr: string;
+  onUpdate: () => void;
 }) {
   const todayGuests = todayReservations.reduce((s, r) => s + r.guests, 0);
+  const [popupReservation, setPopupReservation] = useState<Reservation | null>(
+    null
+  );
 
   return (
     <div>
@@ -263,7 +325,6 @@ function DashboardTab({
         </div>
       </div>
 
-      {/* 本日の予約一覧 */}
       <h3 className="text-lg font-bold text-warm-800 mb-3">
         本日の予約（{todayStr}）
       </h3>
@@ -274,21 +335,43 @@ function DashboardTab({
       ) : (
         <div className="space-y-3">
           {todayReservations.map((r) => (
-            <ReservationCard key={r.id} reservation={r} />
+            <ReservationCard
+              key={r.id}
+              reservation={r}
+              onClick={() => setPopupReservation(r)}
+            />
           ))}
         </div>
+      )}
+
+      {popupReservation && (
+        <ReservationPopup
+          reservation={popupReservation}
+          allReservations={allReservations}
+          onClose={() => setPopupReservation(null)}
+          onUpdate={() => {
+            setPopupReservation(null);
+            onUpdate();
+          }}
+        />
       )}
     </div>
   );
 }
 
+/* ===== Calendar Tab ===== */
+
 function CalendarTab({
   reservations,
+  allReservations,
+  blocks,
   specialOpenDays,
   specialClosedDays,
   onUpdate,
 }: {
   reservations: Reservation[];
+  allReservations: Reservation[];
+  blocks: Block[];
   specialOpenDays: string[];
   specialClosedDays: string[];
   onUpdate: () => void;
@@ -318,13 +401,19 @@ function CalendarTab({
     return reservations.filter((r) => r.date === date).length;
   }
 
+  function getBlockCount(date: string): number {
+    return blocks.filter((b) => b.date === date).length;
+  }
+
   async function toggleSpecialDay(dateStr: string, e: React.MouseEvent) {
     e.stopPropagation();
     setToggling(true);
     try {
       let res: Response;
       if (specialOpenDays.includes(dateStr)) {
-        res = await fetch(`/api/special-open-days/${dateStr}`, { method: "DELETE" });
+        res = await fetch(`/api/special-open-days/${dateStr}`, {
+          method: "DELETE",
+        });
       } else {
         res = await fetch("/api/special-open-days", {
           method: "POST",
@@ -351,7 +440,9 @@ function CalendarTab({
     try {
       let res: Response;
       if (specialClosedDays.includes(dateStr)) {
-        res = await fetch(`/api/special-closed-days/${dateStr}`, { method: "DELETE" });
+        res = await fetch(`/api/special-closed-days/${dateStr}`, {
+          method: "DELETE",
+        });
       } else {
         res = await fetch("/api/special-closed-days", {
           method: "POST",
@@ -374,6 +465,9 @@ function CalendarTab({
 
   const selectedDateReservations = selectedDate
     ? reservations.filter((r) => r.date === selectedDate)
+    : [];
+  const selectedDateBlocks = selectedDate
+    ? blocks.filter((b) => b.date === selectedDate)
     : [];
 
   return (
@@ -433,13 +527,16 @@ function CalendarTab({
             const isSpecial = specialOpenDays.includes(dateStr);
             const isClosed = specialClosedDays.includes(dateStr);
             const count = getReservationCount(dateStr);
+            const blockCount = getBlockCount(dateStr);
             const dayOfWeek = d.getDay();
             const isSelected = dateStr === selectedDate;
 
             return (
               <div
                 key={dateStr}
-                onClick={() => setSelectedDate(dateStr === selectedDate ? null : dateStr)}
+                onClick={() =>
+                  setSelectedDate(dateStr === selectedDate ? null : dateStr)
+                }
                 className={`p-1 sm:p-2 rounded-lg text-center min-h-[52px] sm:min-h-[60px] cursor-pointer transition-colors ${
                   isSelected
                     ? "bg-green-100 border-2 border-green-500 ring-1 ring-green-300"
@@ -463,12 +560,18 @@ function CalendarTab({
                 >
                   {d.getDate()}
                 </div>
-                {count > 0 && (
-                  <div className="text-[10px] sm:text-xs text-green-600 font-bold">
-                    {count}件
-                  </div>
-                )}
-                {/* 定休日（火水）の臨時営業トグル */}
+                <div className="flex items-center justify-center gap-0.5">
+                  {count > 0 && (
+                    <span className="text-[10px] sm:text-xs text-green-600 font-bold">
+                      {count}件
+                    </span>
+                  )}
+                  {blockCount > 0 && (
+                    <span className="text-[10px] text-red-400 font-bold">
+                      B
+                    </span>
+                  )}
+                </div>
                 {isHoliday && (
                   <button
                     onClick={(e) => toggleSpecialDay(dateStr, e)}
@@ -482,7 +585,6 @@ function CalendarTab({
                     {isSpecial ? "臨営" : "定休"}
                   </button>
                 )}
-                {/* 営業日の臨時休業トグル */}
                 {!isHoliday && (
                   <button
                     onClick={(e) => toggleClosedDay(dateStr, e)}
@@ -503,56 +605,52 @@ function CalendarTab({
       </div>
 
       <p className="text-xs text-warm-400 mt-3">
-        火曜・水曜の「定休日」→臨時営業に切替可。営業日の「休業設定」→臨時休業に切替可。日付クリックでタイムライン表示。
+        火曜・水曜の「定休日」→臨時営業に切替可。営業日の「休業設定」→臨時休業に切替可。日付クリックでタイムライン表示。B
+        = ブロックあり。
       </p>
 
-      {/* タイムラインビュー */}
       {selectedDate && (
         <TimelineView
           date={selectedDate}
           reservations={selectedDateReservations}
+          allReservations={allReservations}
+          blocks={selectedDateBlocks}
+          onUpdate={onUpdate}
         />
       )}
     </div>
   );
 }
 
-/* ===== タイムラインビュー ===== */
-
-const TIMELINE_SEATS = [
-  { id: "counter", label: "カウンター", rowIndex: 0 },
-  { id: "table2a", label: "2名席A", rowIndex: 1 },
-  { id: "table2b", label: "2名席B", rowIndex: 2 },
-  { id: "table4", label: "4名席", rowIndex: 3 },
-  { id: "table6", label: "6名席", rowIndex: 4 },
-];
-
-const ROW_HEIGHT = 48;
-const SEAT_LABEL_WIDTH = 80;
-
-function timeToMinutes(time: string): number {
-  const [h, m] = time.split(":").map(Number);
-  return h * 60 + m;
-}
+/* ===== Timeline View ===== */
 
 function TimelineView({
   date,
   reservations,
+  allReservations,
+  blocks,
+  onUpdate,
 }: {
   date: string;
   reservations: Reservation[];
+  allReservations: Reservation[];
+  blocks: Block[];
+  onUpdate: () => void;
 }) {
-  const [popupReservation, setPopupReservation] = useState<Reservation | null>(null);
+  const [popupReservation, setPopupReservation] =
+    useState<Reservation | null>(null);
 
   const d = parseDate(date);
   const isWknd = isWeekend(d);
 
-  // 平日: 11:30〜15:00 / 土日祝: 9:00〜17:00
-  const timelineStartMin = isWknd ? timeToMinutes("09:00") : timeToMinutes("11:30");
-  const timelineEndMin = isWknd ? timeToMinutes("17:00") : timeToMinutes("15:00");
+  const timelineStartMin = isWknd
+    ? timeToMinutes("09:00")
+    : timeToMinutes("11:30");
+  const timelineEndMin = isWknd
+    ? timeToMinutes("17:00")
+    : timeToMinutes("15:00");
   const totalMinutes = timelineEndMin - timelineStartMin;
 
-  // 時間ラベル（1時間刻み）
   const hourLabels: { label: string; offsetPct: number }[] = [];
   const firstHour = Math.ceil(timelineStartMin / 60);
   const lastHour = Math.floor(timelineEndMin / 60);
@@ -566,16 +664,25 @@ function TimelineView({
     }
   }
 
-  // 30分刻みの補助線
   const gridLines: number[] = [];
   for (let m = timelineStartMin; m <= timelineEndMin; m += 30) {
     gridLines.push(((m - timelineStartMin) / totalMinutes) * 100);
   }
 
-  const confirmedReservations = reservations.filter((r) => r.status === "confirmed");
+  const confirmedReservations = reservations.filter(
+    (r) => r.status === "confirmed"
+  );
 
-  // 予約ブロックの位置計算
-  function getBlockStyle(r: Reservation) {
+  function getBlockPctStyle(startTime: string, endTime: string) {
+    const startMin = Math.max(timeToMinutes(startTime), timelineStartMin);
+    const endMin = Math.min(timeToMinutes(endTime), timelineEndMin);
+    if (startMin >= endMin) return null;
+    const leftPct = ((startMin - timelineStartMin) / totalMinutes) * 100;
+    const widthPct = ((endMin - startMin) / totalMinutes) * 100;
+    return { left: `${leftPct}%`, width: `${widthPct}%` };
+  }
+
+  function getReservationBlockStyle(r: Reservation) {
     const startMin = timeToMinutes(r.start_time);
     const endMin = timeToMinutes(r.end_time);
     const leftPct = ((startMin - timelineStartMin) / totalMinutes) * 100;
@@ -583,22 +690,20 @@ function TimelineView({
     return { left: `${leftPct}%`, width: `${widthPct}%` };
   }
 
-  // 結合席かどうか
-  function isCombined(r: Reservation): boolean {
-    return r.seat_type === "combined" || r.seat_id === "table2ab";
-  }
-
-  // 各予約をどの行に表示するか決定
   function getRowsForReservation(r: Reservation): number[] {
-    if (isCombined(r)) {
-      // table2a (row 1) と table2b (row 2) にまたがる
-      return [1, 2];
+    const physicalSeats = r.uses_seats?.length ? r.uses_seats : [r.seat_id];
+    if (physicalSeats.length > 1) {
+      const rows: number[] = [];
+      for (const psId of physicalSeats) {
+        const ts = TIMELINE_SEATS.find((s) => s.id === psId);
+        if (ts) rows.push(ts.rowIndex);
+      }
+      return rows.sort((a, b) => a - b);
     }
     const seat = TIMELINE_SEATS.find((s) => s.id === r.seat_id);
     return seat ? [seat.rowIndex] : [];
   }
 
-  // ブロックの色
   const BLOCK_COLORS = [
     "bg-green-500",
     "bg-green-600",
@@ -618,7 +723,7 @@ function TimelineView({
 
       <div className="bg-white rounded-xl shadow-sm p-4 overflow-x-auto">
         <div className="min-w-[600px]">
-          {/* 時間ラベル */}
+          {/* 時間ラベル上 */}
           <div className="flex" style={{ marginLeft: SEAT_LABEL_WIDTH }}>
             <div className="relative w-full h-6">
               {hourLabels.map((h) => (
@@ -633,20 +738,21 @@ function TimelineView({
             </div>
           </div>
 
-          {/* タイムライングリッド + 予約ブロック */}
+          {/* グリッド + ブロック + 予約 */}
           <div className="relative">
             {TIMELINE_SEATS.map((seat, rowIdx) => (
-              <div key={seat.id} className="flex items-stretch" style={{ height: ROW_HEIGHT }}>
-                {/* 席ラベル */}
+              <div
+                key={seat.id}
+                className="flex items-stretch"
+                style={{ height: ROW_HEIGHT }}
+              >
                 <div
                   className="shrink-0 flex items-center justify-end pr-3 text-xs font-medium text-warm-700"
                   style={{ width: SEAT_LABEL_WIDTH }}
                 >
                   {seat.label}
                 </div>
-                {/* グリッド領域 */}
                 <div className="relative flex-1 border-b border-warm-100">
-                  {/* 補助線 */}
                   {gridLines.map((pct, i) => (
                     <div
                       key={i}
@@ -654,54 +760,90 @@ function TimelineView({
                       style={{ left: `${pct}%` }}
                     />
                   ))}
-                  {/* 時間帯の背景 */}
                   <div className="absolute inset-0 bg-warm-50 opacity-30" />
+
+                  {/* 予約ブロック（赤系 overlay） */}
+                  {blocks.map((block) => {
+                    const isFullBlock = !block.seat_id;
+                    const isSeatBlock = block.seat_id === seat.id;
+                    if (!isFullBlock && !isSeatBlock) return null;
+                    const style = getBlockPctStyle(
+                      block.start_time,
+                      block.end_time
+                    );
+                    if (!style) return null;
+                    return (
+                      <div
+                        key={`block-${block.id}-${rowIdx}`}
+                        className="absolute bg-red-300 opacity-40"
+                        style={{
+                          ...style,
+                          top: 2,
+                          bottom: 2,
+                          zIndex: 5,
+                          backgroundImage:
+                            "repeating-linear-gradient(45deg,transparent,transparent 4px,rgba(255,255,255,0.4) 4px,rgba(255,255,255,0.4) 8px)",
+                        }}
+                      />
+                    );
+                  })}
 
                   {/* 予約ブロック */}
                   {confirmedReservations
-                    .filter((r) => {
-                      const rows = getRowsForReservation(r);
-                      return rows.includes(rowIdx);
-                    })
+                    .filter((r) => getRowsForReservation(r).includes(rowIdx))
                     .map((r, blockIdx) => {
-                      const style = getBlockStyle(r);
-                      const combined = isCombined(r);
+                      const style = getReservationBlockStyle(r);
                       const rows = getRowsForReservation(r);
-                      const isTopOfCombined = combined && rowIdx === rows[0];
-                      const isBottomOfCombined = combined && rowIdx === rows[rows.length - 1];
+                      const isCombined = rows.length > 1;
+                      const isTop = isCombined && rowIdx === rows[0];
+                      const isBottom =
+                        isCombined && rowIdx === rows[rows.length - 1];
+                      const isMoved = r.auto_moved;
 
                       return (
                         <div
                           key={r.id}
                           onClick={() => setPopupReservation(r)}
                           className={`absolute cursor-pointer transition-opacity hover:opacity-90 ${
-                            BLOCK_COLORS[blockIdx % BLOCK_COLORS.length]
+                            isMoved
+                              ? "bg-amber-500"
+                              : BLOCK_COLORS[blockIdx % BLOCK_COLORS.length]
                           } text-white shadow-sm ${
-                            combined
-                              ? isTopOfCombined
+                            isCombined
+                              ? isTop
                                 ? "rounded-t-md border-b-0"
-                                : isBottomOfCombined
+                                : isBottom
                                 ? "rounded-b-md border-t-0"
                                 : ""
                               : "rounded-md"
                           }`}
                           style={{
                             ...style,
-                            top: combined && !isTopOfCombined ? 0 : 4,
-                            bottom: combined && !isBottomOfCombined ? 0 : 4,
+                            top: isCombined && !isTop ? 0 : 4,
+                            bottom: isCombined && !isBottom ? 0 : 4,
                             zIndex: 10,
                           }}
                         >
-                          {/* 結合席は上段のみテキスト表示 */}
-                          {(!combined || isTopOfCombined) && (
+                          {(!isCombined || isTop) && (
                             <div className="px-1.5 py-0.5 truncate">
-                              <span className="text-xs font-bold">{r.name}</span>
-                              <span className="text-[10px] ml-1 opacity-80">{r.guests}名</span>
+                              <span className="text-xs font-bold">
+                                {r.name}
+                              </span>
+                              <span className="text-[10px] ml-1 opacity-80">
+                                {r.guests}名
+                              </span>
+                              {isMoved && (
+                                <span className="text-[10px] ml-0.5 opacity-80">
+                                  移
+                                </span>
+                              )}
                             </div>
                           )}
-                          {combined && isBottomOfCombined && (
+                          {isCombined && isBottom && (
                             <div className="px-1.5 py-0.5">
-                              <span className="text-[10px] opacity-70">結合席</span>
+                              <span className="text-[10px] opacity-70">
+                                結合席
+                              </span>
                             </div>
                           )}
                         </div>
@@ -712,7 +854,7 @@ function TimelineView({
             ))}
           </div>
 
-          {/* 下部時間ラベル */}
+          {/* 時間ラベル下 */}
           <div className="flex" style={{ marginLeft: SEAT_LABEL_WIDTH }}>
             <div className="relative w-full h-6">
               {hourLabels.map((h) => (
@@ -728,32 +870,307 @@ function TimelineView({
           </div>
         </div>
 
-        {confirmedReservations.length === 0 && (
+        {confirmedReservations.length === 0 && blocks.length === 0 && (
           <p className="text-center text-warm-400 text-sm py-4">
-            この日の予約はありません
+            この日の予約・ブロックはありません
           </p>
         )}
       </div>
+
+      {/* ブロック設定パネル */}
+      <BlockSettingsPanel
+        date={date}
+        blocks={blocks}
+        reservations={confirmedReservations}
+        onUpdate={onUpdate}
+      />
 
       {/* 予約詳細ポップアップ */}
       {popupReservation && (
         <ReservationPopup
           reservation={popupReservation}
+          allReservations={allReservations}
           onClose={() => setPopupReservation(null)}
+          onUpdate={() => {
+            setPopupReservation(null);
+            onUpdate();
+          }}
         />
       )}
     </div>
   );
 }
 
+/* ===== Block Settings Panel ===== */
+
+function BlockSettingsPanel({
+  date,
+  blocks,
+  reservations,
+  onUpdate,
+}: {
+  date: string;
+  blocks: Block[];
+  reservations: Reservation[];
+  onUpdate: () => void;
+}) {
+  const [blockType, setBlockType] = useState<"all" | "seat">("all");
+  const [blockSeatId, setBlockSeatId] = useState("counter");
+  const [blockStartTime, setBlockStartTime] = useState("11:30");
+  const [blockEndTime, setBlockEndTime] = useState("15:00");
+  const [blockWarning, setBlockWarning] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  // 既存予約との重複チェック
+  function checkOverlap(
+    seatId: string | null,
+    startTime: string,
+    endTime: string
+  ): boolean {
+    return reservations.some((r) => {
+      if (!doTimesOverlap(startTime, endTime, r.start_time, r.end_time))
+        return false;
+      if (!seatId) return true; // 全席ブロックは全予約と干渉
+      const physicalSeats = r.uses_seats?.length ? r.uses_seats : [r.seat_id];
+      return physicalSeats.includes(seatId);
+    });
+  }
+
+  function handleCheckWarning() {
+    const seatId = blockType === "seat" ? blockSeatId : null;
+    if (checkOverlap(seatId, blockStartTime, blockEndTime)) {
+      setBlockWarning("この時間帯にすでに予約があります");
+    } else {
+      setBlockWarning("");
+    }
+  }
+
+  // フォーム値が変わったら警告を再チェック
+  useEffect(() => {
+    handleCheckWarning();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blockType, blockSeatId, blockStartTime, blockEndTime, reservations]);
+
+  async function handleAddBlock(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/reservation-blocks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date,
+          seat_id: blockType === "seat" ? blockSeatId : null,
+          start_time: blockStartTime,
+          end_time: blockEndTime,
+        }),
+      });
+      if (res.ok) {
+        await onUpdate();
+      } else {
+        const err = await res.json();
+        alert(err.error || "ブロックの追加に失敗しました");
+      }
+    } catch {
+      alert("通信エラーが発生しました");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDeleteBlock(blockId: string) {
+    try {
+      const res = await fetch(`/api/reservation-blocks/${blockId}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        await onUpdate();
+      }
+    } catch {
+      alert("通信エラーが発生しました");
+    }
+  }
+
+  return (
+    <div className="mt-4 bg-white rounded-xl shadow-sm p-4">
+      <h4 className="text-sm font-bold text-warm-800 mb-3">
+        予約ブロック設定
+      </h4>
+
+      {/* 既存ブロック一覧 */}
+      {blocks.length > 0 && (
+        <div className="space-y-2 mb-4">
+          {blocks.map((block) => (
+            <div
+              key={block.id}
+              className="flex items-center justify-between bg-red-50 rounded-lg px-3 py-2 text-sm"
+            >
+              <div>
+                <span className="font-medium text-red-700">
+                  {block.seat_id
+                    ? TIMELINE_SEATS.find((s) => s.id === block.seat_id)
+                        ?.label || block.seat_id
+                    : "全席"}
+                </span>
+                <span className="text-red-500 ml-2">
+                  {block.start_time}〜{block.end_time}
+                </span>
+              </div>
+              <button
+                onClick={() => handleDeleteBlock(block.id)}
+                className="text-red-400 hover:text-red-600 text-xs px-2 py-1"
+              >
+                解除
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ブロック追加フォーム */}
+      <form
+        onSubmit={handleAddBlock}
+        className="flex flex-wrap items-end gap-2"
+      >
+        <div>
+          <label className="block text-xs text-warm-500 mb-1">種別</label>
+          <select
+            value={blockType}
+            onChange={(e) => setBlockType(e.target.value as "all" | "seat")}
+            className="border border-warm-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-green-500"
+          >
+            <option value="all">全席一括</option>
+            <option value="seat">席別</option>
+          </select>
+        </div>
+        {blockType === "seat" && (
+          <div>
+            <label className="block text-xs text-warm-500 mb-1">席</label>
+            <select
+              value={blockSeatId}
+              onChange={(e) => setBlockSeatId(e.target.value)}
+              className="border border-warm-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-green-500"
+            >
+              {TIMELINE_SEATS.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div>
+          <label className="block text-xs text-warm-500 mb-1">開始</label>
+          <input
+            type="time"
+            value={blockStartTime}
+            onChange={(e) => setBlockStartTime(e.target.value)}
+            className="border border-warm-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-green-500"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-warm-500 mb-1">終了</label>
+          <input
+            type="time"
+            value={blockEndTime}
+            onChange={(e) => setBlockEndTime(e.target.value)}
+            className="border border-warm-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-green-500"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={submitting}
+          className="bg-red-500 hover:bg-red-600 disabled:bg-red-300 text-white text-sm font-medium px-4 py-1.5 rounded-lg transition-colors"
+        >
+          {submitting ? "追加中..." : "ブロック追加"}
+        </button>
+      </form>
+      {blockWarning && (
+        <p className="text-amber-600 text-xs mt-2">{blockWarning}</p>
+      )}
+    </div>
+  );
+}
+
+/* ===== Reservation Popup (with seat change & auto_moved) ===== */
+
 function ReservationPopup({
   reservation: r,
+  allReservations,
   onClose,
+  onUpdate,
 }: {
   reservation: Reservation;
+  allReservations: Reservation[];
   onClose: () => void;
+  onUpdate: () => void;
 }) {
   const d = parseDate(r.date);
+  const [showSeatChange, setShowSeatChange] = useState(false);
+  const [changingTo, setChangingTo] = useState<string | null>(null);
+  const [seatChangeError, setSeatChangeError] = useState("");
+
+  // 席変更候補の計算
+  const otherConfirmed = allReservations.filter(
+    (res) =>
+      res.id !== r.id &&
+      res.date === r.date &&
+      res.status === "confirmed"
+  );
+
+  function isSeatAvailableForChange(seatId: string): boolean {
+    const seat = SEATS.find((s) => s.id === seatId);
+    if (!seat) return false;
+    if (seat.maxGuests < r.guests) return false;
+
+    for (const other of otherConfirmed) {
+      if (
+        !doTimesOverlap(r.start_time, r.end_time, other.start_time, other.end_time)
+      )
+        continue;
+      const otherPhysical = other.uses_seats?.length
+        ? other.uses_seats
+        : [other.seat_id];
+      if (seat.usesSeats.some((ps) => otherPhysical.includes(ps))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  const candidateSeats = SEATS.filter(
+    (s) => s.maxGuests >= r.guests
+  ).map((s) => ({
+    ...s,
+    available: isSeatAvailableForChange(s.id),
+    isCurrent: s.id === r.seat_id,
+  }));
+
+  async function handleSeatChange(seatId: string) {
+    setChangingTo(seatId);
+    setSeatChangeError("");
+    try {
+      const res = await fetch(`/api/reservations/${r.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seat_id: seatId }),
+      });
+      if (res.ok) {
+        onUpdate();
+      } else {
+        const err = await res.json();
+        setSeatChangeError(err.error || "席変更に失敗しました");
+      }
+    } catch {
+      setSeatChangeError("通信エラーが発生しました");
+    } finally {
+      setChangingTo(null);
+    }
+  }
+
+  const originalSeatLabel = r.original_seat_id
+    ? SEATS.find((s) => s.id === r.original_seat_id)?.label || r.original_seat_id
+    : null;
 
   return (
     <div
@@ -762,7 +1179,7 @@ function ReservationPopup({
     >
       <div className="absolute inset-0 bg-black/30" />
       <div
-        className="relative bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm"
+        className="relative bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <button
@@ -778,9 +1195,16 @@ function ReservationPopup({
           予約詳細
         </h4>
         <div className="space-y-2 text-sm">
-          <div className="flex justify-between">
+          <div className="flex justify-between items-center">
             <span className="text-warm-500">お名前</span>
-            <span className="font-bold text-warm-800">{r.name}</span>
+            <div className="flex items-center gap-1.5">
+              <span className="font-bold text-warm-800">{r.name}</span>
+              {r.auto_moved && (
+                <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">
+                  自動移動
+                </span>
+              )}
+            </div>
           </div>
           <div className="flex justify-between">
             <span className="text-warm-500">日時</span>
@@ -798,7 +1222,7 @@ function ReservationPopup({
             <span className="text-warm-500">人数</span>
             <span className="text-warm-800">{r.guests}名</span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between items-center">
             <span className="text-warm-500">お席</span>
             <span className="text-warm-800">
               {r.seat_label}
@@ -809,6 +1233,12 @@ function ReservationPopup({
               )}
             </span>
           </div>
+          {r.auto_moved && originalSeatLabel && (
+            <div className="flex justify-between">
+              <span className="text-warm-500">移動前の席</span>
+              <span className="text-amber-600">{originalSeatLabel}</span>
+            </div>
+          )}
           <hr className="border-warm-200" />
           <div className="flex justify-between">
             <span className="text-warm-500">電話番号</span>
@@ -829,9 +1259,76 @@ function ReservationPopup({
             </div>
           )}
         </div>
+
+        {/* 席変更セクション */}
+        {r.status === "confirmed" && (
+          <div className="mt-4">
+            {!showSeatChange ? (
+              <button
+                onClick={() => setShowSeatChange(true)}
+                className="w-full bg-warm-100 hover:bg-warm-200 text-warm-700 font-medium py-2 rounded-lg transition-colors text-sm"
+              >
+                席を変更
+              </button>
+            ) : (
+              <div className="border border-warm-200 rounded-lg p-3">
+                <p className="text-xs text-warm-500 mb-2 font-medium">
+                  変更先の席を選択
+                </p>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {candidateSeats.map((s) => (
+                    <button
+                      key={s.id}
+                      disabled={!s.available || s.isCurrent || changingTo !== null}
+                      onClick={() => handleSeatChange(s.id)}
+                      className={`w-full text-left text-sm px-3 py-2 rounded-lg transition-colors ${
+                        s.isCurrent
+                          ? "bg-green-50 border border-green-300 text-green-700"
+                          : s.available
+                          ? "bg-warm-50 hover:bg-warm-100 text-warm-800"
+                          : "bg-warm-50 text-warm-300 cursor-not-allowed"
+                      }`}
+                    >
+                      <span className="font-medium">{s.label}</span>
+                      <span className="text-xs ml-1.5 text-warm-400">
+                        最大{s.maxGuests}名
+                      </span>
+                      {s.isCurrent && (
+                        <span className="text-xs ml-1 text-green-600">
+                          (現在)
+                        </span>
+                      )}
+                      {!s.available && !s.isCurrent && (
+                        <span className="text-xs ml-1 text-warm-300">
+                          (使用中)
+                        </span>
+                      )}
+                      {changingTo === s.id && (
+                        <span className="text-xs ml-1">変更中...</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                {seatChangeError && (
+                  <p className="text-red-500 text-xs mt-2">{seatChangeError}</p>
+                )}
+                <button
+                  onClick={() => {
+                    setShowSeatChange(false);
+                    setSeatChangeError("");
+                  }}
+                  className="mt-2 text-xs text-warm-500 hover:text-warm-700"
+                >
+                  キャンセル
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         <button
           onClick={onClose}
-          className="mt-5 w-full bg-warm-100 hover:bg-warm-200 text-warm-700 font-medium py-2 rounded-lg transition-colors text-sm"
+          className="mt-4 w-full bg-warm-100 hover:bg-warm-200 text-warm-700 font-medium py-2 rounded-lg transition-colors text-sm"
         >
           閉じる
         </button>
@@ -839,6 +1336,8 @@ function ReservationPopup({
     </div>
   );
 }
+
+/* ===== Reservations Tab ===== */
 
 function ReservationsTab({
   reservations,
@@ -850,6 +1349,9 @@ function ReservationsTab({
   onUpdate: () => void;
 }) {
   const [filter, setFilter] = useState<Filter>("upcoming");
+  const [popupReservation, setPopupReservation] = useState<Reservation | null>(
+    null
+  );
 
   const filtered = reservations.filter((r) => {
     switch (filter) {
@@ -918,13 +1420,28 @@ function ReservationsTab({
               showActions
               onCancel={() => handleStatusChange(r.id, "cancelled")}
               onRestore={() => handleStatusChange(r.id, "confirmed")}
+              onClick={() => setPopupReservation(r)}
             />
           ))}
         </div>
       )}
+
+      {popupReservation && (
+        <ReservationPopup
+          reservation={popupReservation}
+          allReservations={reservations}
+          onClose={() => setPopupReservation(null)}
+          onUpdate={() => {
+            setPopupReservation(null);
+            onUpdate();
+          }}
+        />
+      )}
     </div>
   );
 }
+
+/* ===== Settings Tab ===== */
 
 function SettingsTab() {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -933,6 +1450,64 @@ function SettingsTab() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  const [maxGuestsPerSlot, setMaxGuestsPerSlot] = useState(10);
+  const [maxGuestsPerGroup, setMaxGuestsPerGroup] = useState(8);
+  const [settingsMessage, setSettingsMessage] = useState("");
+  const [settingsError, setSettingsError] = useState("");
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsSubmitting, setSettingsSubmitting] = useState(false);
+
+  useEffect(() => {
+    async function fetchSettings() {
+      try {
+        const res = await fetch("/api/settings");
+        if (res.ok) {
+          const data = await res.json();
+          setMaxGuestsPerSlot(data.max_guests_per_slot);
+          setMaxGuestsPerGroup(data.max_guests_per_group);
+        }
+      } catch {
+        // ignore
+      } finally {
+        setSettingsLoading(false);
+      }
+    }
+    fetchSettings();
+  }, []);
+
+  async function handleSettingsSave(e: React.FormEvent) {
+    e.preventDefault();
+    setSettingsMessage("");
+    setSettingsError("");
+
+    if (maxGuestsPerSlot < 1 || maxGuestsPerGroup < 1) {
+      setSettingsError("1以上の値を入力してください");
+      return;
+    }
+
+    setSettingsSubmitting(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          max_guests_per_slot: maxGuestsPerSlot,
+          max_guests_per_group: maxGuestsPerGroup,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSettingsMessage("設定を保存しました");
+      } else {
+        setSettingsError(data.error || "設定の保存に失敗しました");
+      }
+    } catch {
+      setSettingsError("通信エラーが発生しました");
+    } finally {
+      setSettingsSubmitting(false);
+    }
+  }
 
   async function handlePasswordChange(e: React.FormEvent) {
     e.preventDefault();
@@ -983,6 +1558,61 @@ function SettingsTab() {
       >
         設定
       </h2>
+
+      <div className="bg-white rounded-xl shadow-sm p-6 max-w-md mb-6">
+        <h3 className="text-lg font-bold text-warm-800 mb-4">予約設定</h3>
+        {settingsLoading ? (
+          <p className="text-warm-500 text-sm">読み込み中...</p>
+        ) : (
+          <form onSubmit={handleSettingsSave} className="space-y-4">
+            <div>
+              <label className="block text-sm text-warm-600 mb-1">
+                同時スタート人数上限
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={maxGuestsPerSlot}
+                onChange={(e) => setMaxGuestsPerSlot(Number(e.target.value))}
+                className="w-full border border-warm-300 rounded-lg px-4 py-2 focus:outline-none focus:border-green-500"
+              />
+              <p className="text-xs text-warm-400 mt-1">
+                同じ開始時刻に受け入れる合計人数の上限
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm text-warm-600 mb-1">
+                1団体の人数上限
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={maxGuestsPerGroup}
+                onChange={(e) => setMaxGuestsPerGroup(Number(e.target.value))}
+                className="w-full border border-warm-300 rounded-lg px-4 py-2 focus:outline-none focus:border-green-500"
+              />
+              <p className="text-xs text-warm-400 mt-1">
+                1回の予約で指定できる最大人数
+              </p>
+            </div>
+
+            {settingsError && (
+              <p className="text-red-500 text-sm">{settingsError}</p>
+            )}
+            {settingsMessage && (
+              <p className="text-green-600 text-sm">{settingsMessage}</p>
+            )}
+
+            <button
+              type="submit"
+              disabled={settingsSubmitting}
+              className="w-full bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white font-medium py-2 rounded-lg transition-colors"
+            >
+              {settingsSubmitting ? "保存中..." : "設定を保存"}
+            </button>
+          </form>
+        )}
+      </div>
 
       <div className="bg-white rounded-xl shadow-sm p-6 max-w-md">
         <h3 className="text-lg font-bold text-warm-800 mb-4">
@@ -1040,26 +1670,31 @@ function SettingsTab() {
   );
 }
 
+/* ===== Reservation Card ===== */
+
 function ReservationCard({
   reservation: r,
   showActions,
   onCancel,
   onRestore,
+  onClick,
 }: {
   reservation: Reservation;
   showActions?: boolean;
   onCancel?: () => void;
   onRestore?: () => void;
+  onClick?: () => void;
 }) {
   const d = parseDate(r.date);
 
   return (
     <div
+      onClick={onClick}
       className={`bg-white rounded-xl shadow-sm p-4 border-l-4 ${
         r.status === "cancelled"
           ? "border-warm-300 opacity-60"
           : "border-green-500"
-      }`}
+      } ${onClick ? "cursor-pointer hover:shadow-md transition-shadow" : ""}`}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="space-y-1">
@@ -1069,6 +1704,11 @@ function ReservationCard({
             {r.seat_type === "combined" && (
               <span className="text-xs bg-warm-200 text-warm-600 px-1.5 py-0.5 rounded">
                 結合席
+              </span>
+            )}
+            {r.auto_moved && (
+              <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">
+                自動移動
               </span>
             )}
             {r.status === "cancelled" && (
@@ -1081,16 +1721,14 @@ function ReservationCard({
             {r.date} ({getDayLabel(d)}) {r.start_time}〜{r.end_time}（
             {r.slot_label}）
           </p>
-          <p className="text-sm text-warm-500">
-            席: {r.seat_label}
-          </p>
+          <p className="text-sm text-warm-500">席: {r.seat_label}</p>
           <p className="text-sm text-warm-500">TEL: {r.phone}</p>
           {r.note && (
             <p className="text-sm text-warm-400">備考: {r.note}</p>
           )}
         </div>
         {showActions && (
-          <div className="flex gap-2">
+          <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
             {r.status === "confirmed" && onCancel && (
               <button
                 onClick={onCancel}

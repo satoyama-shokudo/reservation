@@ -13,14 +13,7 @@ import {
 
 interface TimeAvailability {
   time: string;
-  availableCount: number;
-  seats: {
-    id: string;
-    label: string;
-    maxGuests: number;
-    type: string;
-    usesSeats: string[];
-  }[];
+  available: boolean;
 }
 
 interface SlotAvailability {
@@ -31,15 +24,7 @@ interface SlotAvailability {
   times: TimeAvailability[];
 }
 
-interface SelectedSeat {
-  id: string;
-  label: string;
-  maxGuests: number;
-  type: string;
-  usesSeats: string[];
-}
-
-const STEPS = ["日時を選ぶ", "お席を選ぶ", "お客様情報", "確認"];
+const STEPS = ["日時を選ぶ", "お客様情報", "確認"];
 
 export default function ReservePage() {
   const [step, setStep] = useState(0);
@@ -47,6 +32,7 @@ export default function ReservePage() {
   // Step 1: 日時選択
   const [selectedDate, setSelectedDate] = useState("");
   const [guests, setGuests] = useState(2);
+  const [maxGuestsPerGroup, setMaxGuestsPerGroup] = useState(8);
   const [availability, setAvailability] = useState<SlotAvailability[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<SlotAvailability | null>(null);
   const [selectedTime, setSelectedTime] = useState("");
@@ -55,19 +41,28 @@ export default function ReservePage() {
   const [loadingAvailability, setLoadingAvailability] = useState(false);
   const [availabilityMessage, setAvailabilityMessage] = useState("");
 
-  // Step 2: 席選択
-  const [availableSeats, setAvailableSeats] = useState<SelectedSeat[]>([]);
-  const [selectedSeat, setSelectedSeat] = useState<SelectedSeat | null>(null);
-
-  // Step 3: お客様情報
+  // Step 2: お客様情報
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [note, setNote] = useState("");
 
-  // Step 4: 確認・完了
+  // Step 3: 確認・完了
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
   const [completed, setCompleted] = useState(false);
+
+  // 管理者設定を取得
+  useEffect(() => {
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.max_guests_per_group) {
+          setMaxGuestsPerGroup(data.max_guests_per_group);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // 臨時営業日・臨時休業日を取得
   useEffect(() => {
@@ -116,6 +111,13 @@ export default function ReservePage() {
     fetchAvailability();
   }, [fetchAvailability]);
 
+  // 人数が上限を超えた場合の調整
+  useEffect(() => {
+    if (guests > maxGuestsPerGroup) {
+      setGuests(maxGuestsPerGroup);
+    }
+  }, [maxGuestsPerGroup, guests]);
+
   // 日付が選択可能か判定
   function isDateSelectable(dateStr: string): boolean {
     const date = parseDate(dateStr);
@@ -123,7 +125,8 @@ export default function ReservePage() {
     today.setHours(0, 0, 0, 0);
     const max = getMaxDate();
     if (date < today || date > max) return false;
-    if (isRegularHoliday(date) && !specialOpenDays.includes(dateStr)) return false;
+    if (isRegularHoliday(date) && !specialOpenDays.includes(dateStr))
+      return false;
     if (specialClosedDays.includes(dateStr)) return false;
     if (isReservationClosed(dateStr)) return false;
     return true;
@@ -135,8 +138,6 @@ export default function ReservePage() {
     const firstDay = new Date(y, m - 1, 1);
     const lastDay = new Date(y, m, 0);
     const days: (string | null)[] = [];
-
-    // 先頭の空白
     for (let i = 0; i < firstDay.getDay(); i++) {
       days.push(null);
     }
@@ -155,13 +156,6 @@ export default function ReservePage() {
   function handleTimeSelect(slot: SlotAvailability, time: string) {
     setSelectedSlot(slot);
     setSelectedTime(time);
-    const timeData = slot.times.find((t) => t.time === time);
-    setAvailableSeats(timeData?.seats || []);
-    setSelectedSeat(null);
-  }
-
-  function handleSeatSelect(seat: SelectedSeat) {
-    setSelectedSeat(seat);
   }
 
   // 終了時刻の計算
@@ -171,9 +165,17 @@ export default function ReservePage() {
     return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
   }
 
+  // 人数ボタンを生成
+  const guestOptions = Array.from(
+    { length: maxGuestsPerGroup },
+    (_, i) => i + 1
+  );
+
   async function handleSubmit() {
-    if (!selectedDate || !selectedSlot || !selectedTime || !selectedSeat || !name || !phone) return;
+    if (!selectedDate || !selectedSlot || !selectedTime || !name || !phone)
+      return;
     setSubmitting(true);
+    setSubmitError("");
     try {
       const res = await fetch("/api/reservations", {
         method: "POST",
@@ -185,10 +187,6 @@ export default function ReservePage() {
           start_time: selectedTime,
           end_time: calcEndTime(selectedTime),
           guests,
-          seat_id: selectedSeat.id,
-          seat_label: selectedSeat.label,
-          seat_type: selectedSeat.type,
-          uses_seats: selectedSeat.usesSeats,
           name,
           phone,
           email: email || null,
@@ -199,10 +197,12 @@ export default function ReservePage() {
         setCompleted(true);
       } else {
         const err = await res.json();
-        alert(err.error || "予約に失敗しました");
+        setSubmitError(
+          err.error || "予約に失敗しました。時間を変えてお試しください。"
+        );
       }
     } catch {
-      alert("通信エラーが発生しました");
+      setSubmitError("通信エラーが発生しました");
     } finally {
       setSubmitting(false);
     }
@@ -219,7 +219,7 @@ export default function ReservePage() {
               className="text-2xl font-bold text-warm-800 mb-4"
               style={{ fontFamily: "var(--font-serif)" }}
             >
-              ご予約ありがとうございます
+              ご予約を承りました
             </h2>
             <div className="text-left bg-warm-50 rounded-lg p-4 mb-6 space-y-2 text-sm">
               <p>
@@ -237,10 +237,6 @@ export default function ReservePage() {
               <p>
                 <span className="text-warm-500">人数：</span>
                 {guests}名
-              </p>
-              <p>
-                <span className="text-warm-500">お席：</span>
-                {selectedSeat?.label}
               </p>
               <p>
                 <span className="text-warm-500">お名前：</span>
@@ -314,8 +310,8 @@ export default function ReservePage() {
               <label className="block text-sm font-medium text-warm-700 mb-2">
                 人数
               </label>
-              <div className="flex gap-2">
-                {[1, 2, 3, 4, 5, 6].map((n) => (
+              <div className="flex flex-wrap gap-2">
+                {guestOptions.map((n) => (
                   <button
                     key={n}
                     onClick={() => setGuests(n)}
@@ -340,7 +336,10 @@ export default function ReservePage() {
                 <button
                   onClick={() => {
                     const [y, m] = calendarMonth.split("-").map(Number);
-                    const prev = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+                    const prev =
+                      m === 1
+                        ? `${y - 1}-12`
+                        : `${y}-${String(m - 1).padStart(2, "0")}`;
                     setCalendarMonth(prev);
                   }}
                   className="text-warm-600 hover:text-warm-800 px-2 py-1"
@@ -353,7 +352,10 @@ export default function ReservePage() {
                 <button
                   onClick={() => {
                     const [y, m] = calendarMonth.split("-").map(Number);
-                    const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+                    const next =
+                      m === 12
+                        ? `${y + 1}-01`
+                        : `${y}-${String(m + 1).padStart(2, "0")}`;
                     setCalendarMonth(next);
                   }}
                   className="text-warm-600 hover:text-warm-800 px-2 py-1"
@@ -427,7 +429,9 @@ export default function ReservePage() {
             {selectedDate && (
               <div>
                 {loadingAvailability ? (
-                  <p className="text-center text-warm-500 py-4">読み込み中...</p>
+                  <p className="text-center text-warm-500 py-4">
+                    読み込み中...
+                  </p>
                 ) : availability.length === 0 ? (
                   <p className="text-center text-warm-500 py-4">
                     {availabilityMessage || "この日はご予約いただけません"}
@@ -440,7 +444,6 @@ export default function ReservePage() {
                       </h3>
                       <div className="flex flex-wrap gap-2">
                         {slot.times.map((t) => {
-                          const isAvailable = t.availableCount > 0;
                           const isTimeSelected =
                             selectedSlot?.id === slot.id &&
                             selectedTime === t.time;
@@ -448,24 +451,30 @@ export default function ReservePage() {
                           return (
                             <button
                               key={t.time}
-                              disabled={!isAvailable}
+                              disabled={!t.available}
                               onClick={() => handleTimeSelect(slot, t.time)}
                               className={`px-3 py-2 rounded-lg text-sm transition-colors ${
                                 isTimeSelected
                                   ? "bg-green-600 text-white font-bold"
-                                  : isAvailable
+                                  : t.available
                                   ? "bg-warm-100 hover:bg-warm-200 text-warm-800"
                                   : "bg-warm-100 text-warm-300 cursor-not-allowed"
                               }`}
                             >
                               <div>{t.time}</div>
                               <div className="text-xs mt-0.5">
-                                {isAvailable ? (
-                                  <span className={isTimeSelected ? "text-green-100" : "text-green-600"}>
-                                    残{t.availableCount}席
+                                {t.available ? (
+                                  <span
+                                    className={
+                                      isTimeSelected
+                                        ? "text-green-100"
+                                        : "text-green-600"
+                                    }
+                                  >
+                                    ◯
                                   </span>
                                 ) : (
-                                  <span className="text-warm-300">満席</span>
+                                  <span className="text-warm-300">✕</span>
                                 )}
                               </div>
                             </button>
@@ -491,73 +500,8 @@ export default function ReservePage() {
           </div>
         )}
 
-        {/* Step 2: お席を選ぶ */}
+        {/* Step 2: お客様情報 */}
         {step === 1 && (
-          <div className="bg-white rounded-2xl shadow-md p-6">
-            <h2
-              className="text-xl font-bold text-warm-800 mb-2"
-              style={{ fontFamily: "var(--font-serif)" }}
-            >
-              お席を選ぶ
-            </h2>
-            <p className="text-sm text-warm-500 mb-6">
-              {selectedDate} ({getDayLabel(parseDate(selectedDate))}) {selectedSlot?.label}{" "}
-              {selectedTime}〜{calcEndTime(selectedTime)} / {guests}名
-            </p>
-
-            <div className="space-y-3">
-              {availableSeats.map((seat) => (
-                <button
-                  key={seat.id}
-                  onClick={() => handleSeatSelect(seat)}
-                  className={`w-full text-left p-4 rounded-lg border-2 transition-colors ${
-                    selectedSeat?.id === seat.id
-                      ? "border-green-600 bg-green-50"
-                      : "border-warm-200 hover:border-warm-300 bg-white"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="font-bold text-warm-800">
-                        {seat.label}
-                      </span>
-                      <span className="text-sm text-warm-500 ml-2">
-                        最大{seat.maxGuests}名
-                      </span>
-                    </div>
-                    {selectedSeat?.id === seat.id && (
-                      <span className="text-green-600 font-bold">✓</span>
-                    )}
-                  </div>
-                  {seat.type === "combined" && (
-                    <p className="text-xs text-warm-400 mt-1">
-                      ※2名席を結合してご利用いただきます
-                    </p>
-                  )}
-                </button>
-              ))}
-            </div>
-
-            <div className="mt-6 flex justify-between">
-              <button
-                onClick={() => setStep(0)}
-                className="text-warm-600 hover:text-warm-800 py-2 px-4"
-              >
-                ← 戻る
-              </button>
-              <button
-                onClick={() => selectedSeat && setStep(2)}
-                disabled={!selectedSeat}
-                className="bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-6 rounded-lg transition-colors disabled:opacity-50"
-              >
-                次へ
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Step 3: お客様情報 */}
-        {step === 2 && (
           <div className="bg-white rounded-2xl shadow-md p-6">
             <h2
               className="text-xl font-bold text-warm-800 mb-6"
@@ -619,13 +563,13 @@ export default function ReservePage() {
 
             <div className="mt-6 flex justify-between">
               <button
-                onClick={() => setStep(1)}
+                onClick={() => setStep(0)}
                 className="text-warm-600 hover:text-warm-800 py-2 px-4"
               >
                 ← 戻る
               </button>
               <button
-                onClick={() => name && phone && setStep(3)}
+                onClick={() => name && phone && setStep(2)}
                 disabled={!name || !phone}
                 className="bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-6 rounded-lg transition-colors disabled:opacity-50"
               >
@@ -635,8 +579,8 @@ export default function ReservePage() {
           </div>
         )}
 
-        {/* Step 4: 確認 */}
-        {step === 3 && (
+        {/* Step 3: 確認 */}
+        {step === 2 && (
           <div className="bg-white rounded-2xl shadow-md p-6">
             <h2
               className="text-xl font-bold text-warm-800 mb-6"
@@ -668,12 +612,6 @@ export default function ReservePage() {
                 <span className="text-warm-500">人数</span>
                 <span className="font-medium text-warm-800">{guests}名</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-warm-500">お席</span>
-                <span className="font-medium text-warm-800">
-                  {selectedSeat?.label}
-                </span>
-              </div>
               <hr className="border-warm-200" />
               <div className="flex justify-between">
                 <span className="text-warm-500">お名前</span>
@@ -697,9 +635,13 @@ export default function ReservePage() {
               )}
             </div>
 
+            {submitError && (
+              <p className="text-red-500 text-sm mb-4">{submitError}</p>
+            )}
+
             <div className="flex justify-between">
               <button
-                onClick={() => setStep(2)}
+                onClick={() => setStep(1)}
                 className="text-warm-600 hover:text-warm-800 py-2 px-4"
               >
                 ← 戻る

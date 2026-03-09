@@ -18,6 +18,8 @@ export interface Reservation {
   email?: string;
   note?: string;
   status: string;
+  auto_moved?: boolean;
+  original_seat_id?: string | null;
   created_at: string;
 }
 
@@ -72,7 +74,7 @@ export function getAvailableSeats(
   startTime: string,
   reservations: Reservation[]
 ): Seat[] {
-  const tiers = getSeatTiers(guests);
+  const tiers = getSeatTiers(guests, startTime);
 
   for (const tier of tiers) {
     const available = tier.filter((seat) =>
