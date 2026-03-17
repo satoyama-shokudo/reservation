@@ -38,12 +38,14 @@ export async function GET(request: NextRequest) {
   // 管理者設定を取得
   const { data: settings } = await supabase
     .from("admin_settings")
-    .select("max_guests_per_slot, max_guests_per_group")
+    .select("max_guests_per_slot, max_guests_per_group, morning_last_order, lunch_last_order")
     .limit(1)
     .single();
 
   const maxGuestsPerSlot = settings?.max_guests_per_slot ?? 10;
   const maxGuestsPerGroup = settings?.max_guests_per_group ?? 8;
+  const morningLastOrder = settings?.morning_last_order ?? "10:00";
+  const lunchLastOrder = settings?.lunch_last_order ?? "13:45";
 
   // 団体人数上限チェック
   if (guests > maxGuestsPerGroup) {
@@ -117,9 +119,21 @@ export async function GET(request: NextRequest) {
 
   const slots = getSlotsForDate(date);
 
+  // スロット種別ごとのラストオーダー時刻（分）を取得
+  const lastOrderMinutes: Record<string, number> = {
+    breakfast: timeToMinutes(morningLastOrder),
+    lunch: timeToMinutes(lunchLastOrder),
+  };
+
   const result = slots.map((slot) => {
     const startTimes = getStartTimes(slot);
-    const timesWithAvailability = startTimes.map((time) => {
+    const loMin = lastOrderMinutes[slot.id];
+    // LOが設定されているスロットはLO時刻以降の開始時刻を除外
+    const filteredTimes = loMin !== undefined
+      ? startTimes.filter((time) => timeToMinutes(time) <= loMin)
+      : startTimes;
+
+    const timesWithAvailability = filteredTimes.map((time) => {
       const available = isTimeAvailable(
         time,
         guests,

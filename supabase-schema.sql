@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS admin_settings (
   password_hash TEXT NOT NULL,
   max_guests_per_slot INTEGER NOT NULL DEFAULT 10,
   max_guests_per_group INTEGER NOT NULL DEFAULT 8,
+  morning_last_order VARCHAR(5) DEFAULT '10:00',
+  lunch_last_order VARCHAR(5) DEFAULT '13:45',
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 

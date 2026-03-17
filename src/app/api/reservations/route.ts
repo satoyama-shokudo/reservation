@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { notifyNewReservation } from "@/lib/notify";
 import { allocateSeats } from "@/lib/allocation";
+import { timeToMinutes } from "@/lib/slots";
 import type { Reservation } from "@/lib/availability";
 import type { ReservationBlock } from "@/lib/allocation";
 
@@ -47,12 +48,29 @@ export async function POST(request: NextRequest) {
   // 管理者設定を取得
   const { data: settings } = await supabase
     .from("admin_settings")
-    .select("max_guests_per_slot, max_guests_per_group")
+    .select("max_guests_per_slot, max_guests_per_group, morning_last_order, lunch_last_order")
     .limit(1)
     .single();
 
   const maxGuestsPerSlot = settings?.max_guests_per_slot ?? 10;
   const maxGuestsPerGroup = settings?.max_guests_per_group ?? 8;
+  const morningLastOrder = settings?.morning_last_order ?? "10:00";
+  const lunchLastOrder = settings?.lunch_last_order ?? "13:45";
+
+  // ラストオーダーチェック
+  const startMin = timeToMinutes(start_time);
+  if (slot === "breakfast" && startMin > timeToMinutes(morningLastOrder)) {
+    return NextResponse.json(
+      { error: "モーニングのラストオーダー時刻を過ぎています" },
+      { status: 400 }
+    );
+  }
+  if (slot === "lunch" && startMin > timeToMinutes(lunchLastOrder)) {
+    return NextResponse.json(
+      { error: "ランチのラストオーダー時刻を過ぎています" },
+      { status: 400 }
+    );
+  }
 
   // その日の全予約を取得
   const { data: reservations, error: resError } = await supabase

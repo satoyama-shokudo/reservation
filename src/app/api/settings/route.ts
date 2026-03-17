@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 export async function GET() {
   const { data, error } = await supabase
     .from("admin_settings")
-    .select("max_guests_per_slot, max_guests_per_group")
+    .select("max_guests_per_slot, max_guests_per_group, morning_last_order, lunch_last_order")
     .limit(1)
     .single();
 
@@ -14,19 +14,28 @@ export async function GET() {
     return NextResponse.json({
       max_guests_per_slot: 10,
       max_guests_per_group: 8,
+      morning_last_order: "10:00",
+      lunch_last_order: "13:45",
     });
   }
 
   return NextResponse.json({
     max_guests_per_slot: data.max_guests_per_slot ?? 10,
     max_guests_per_group: data.max_guests_per_group ?? 8,
+    morning_last_order: data.morning_last_order ?? "10:00",
+    lunch_last_order: data.lunch_last_order ?? "13:45",
   });
+}
+
+// HH:MM形式のバリデーション
+function isValidTimeFormat(value: string): boolean {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 }
 
 // PUT /api/settings - 設定値を更新
 export async function PUT(request: NextRequest) {
   const body = await request.json();
-  const { max_guests_per_slot, max_guests_per_group } = body;
+  const { max_guests_per_slot, max_guests_per_group, morning_last_order, lunch_last_order } = body;
 
   if (
     typeof max_guests_per_slot !== "number" ||
@@ -45,6 +54,18 @@ export async function PUT(request: NextRequest) {
     );
   }
 
+  if (
+    typeof morning_last_order !== "string" ||
+    typeof lunch_last_order !== "string" ||
+    !isValidTimeFormat(morning_last_order) ||
+    !isValidTimeFormat(lunch_last_order)
+  ) {
+    return NextResponse.json(
+      { error: "ラストオーダー時刻はHH:MM形式で入力してください" },
+      { status: 400 }
+    );
+  }
+
   // 既存レコードを取得
   const { data: existing } = await supabase
     .from("admin_settings")
@@ -58,6 +79,8 @@ export async function PUT(request: NextRequest) {
       .update({
         max_guests_per_slot,
         max_guests_per_group,
+        morning_last_order,
+        lunch_last_order,
         updated_at: new Date().toISOString(),
       })
       .eq("id", existing.id);
@@ -74,6 +97,8 @@ export async function PUT(request: NextRequest) {
       password_hash: "",
       max_guests_per_slot,
       max_guests_per_group,
+      morning_last_order,
+      lunch_last_order,
     });
 
     if (error) {

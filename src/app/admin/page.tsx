@@ -1447,6 +1447,8 @@ function SettingsTab() {
 
   const [maxGuestsPerSlot, setMaxGuestsPerSlot] = useState(10);
   const [maxGuestsPerGroup, setMaxGuestsPerGroup] = useState(8);
+  const [morningLastOrder, setMorningLastOrder] = useState("10:00");
+  const [lunchLastOrder, setLunchLastOrder] = useState("13:45");
   const [settingsMessage, setSettingsMessage] = useState("");
   const [settingsError, setSettingsError] = useState("");
   const [settingsLoading, setSettingsLoading] = useState(true);
@@ -1460,6 +1462,8 @@ function SettingsTab() {
           const data = await res.json();
           setMaxGuestsPerSlot(data.max_guests_per_slot);
           setMaxGuestsPerGroup(data.max_guests_per_group);
+          if (data.morning_last_order) setMorningLastOrder(data.morning_last_order);
+          if (data.lunch_last_order) setLunchLastOrder(data.lunch_last_order);
         }
       } catch {
         // ignore
@@ -1488,6 +1492,8 @@ function SettingsTab() {
         body: JSON.stringify({
           max_guests_per_slot: maxGuestsPerSlot,
           max_guests_per_group: maxGuestsPerGroup,
+          morning_last_order: morningLastOrder,
+          lunch_last_order: lunchLastOrder,
         }),
       });
       const data = await res.json();
@@ -1587,6 +1593,34 @@ function SettingsTab() {
               />
               <p className="text-xs text-warm-400 mt-1">
                 1回の予約で指定できる最大人数
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm text-warm-600 mb-1">
+                モーニング ラストオーダー時刻
+              </label>
+              <input
+                type="time"
+                value={morningLastOrder}
+                onChange={(e) => setMorningLastOrder(e.target.value)}
+                className="w-full border border-warm-300 rounded-lg px-4 py-2 focus:outline-none focus:border-green-500"
+              />
+              <p className="text-xs text-warm-400 mt-1">
+                この時刻が最後に選べる開始時刻になります（土日の朝食）
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm text-warm-600 mb-1">
+                ランチ ラストオーダー時刻
+              </label>
+              <input
+                type="time"
+                value={lunchLastOrder}
+                onChange={(e) => setLunchLastOrder(e.target.value)}
+                className="w-full border border-warm-300 rounded-lg px-4 py-2 focus:outline-none focus:border-green-500"
+              />
+              <p className="text-xs text-warm-400 mt-1">
+                この時刻が最後に選べる開始時刻になります（ランチ）
               </p>
             </div>
 
