@@ -7,8 +7,10 @@ import {
   getSlotsForDate,
   getStartTimes,
   timeToMinutes,
+  minutesToTime,
   getEndTime,
 } from "@/lib/slots";
+import type { TimeSlot } from "@/lib/slots";
 import { getAvailableSeats } from "@/lib/availability";
 import type { Reservation } from "@/lib/availability";
 import { getSeatTiers } from "@/lib/seats";
@@ -126,14 +128,15 @@ export async function GET(request: NextRequest) {
   };
 
   const result = slots.map((slot) => {
-    const startTimes = getStartTimes(slot);
     const loMin = lastOrderMinutes[slot.id];
-    // LOが設定されているスロットはLO時刻以降の開始時刻を除外
-    const filteredTimes = loMin !== undefined
-      ? startTimes.filter((time) => timeToMinutes(time) <= loMin)
-      : startTimes;
+    // LOが設定されているスロットはstartHour〜LO時刻の範囲で開始時刻を生成
+    // （start+90≤endHourの制約ではなくLOが上限になる）
+    // LOがないスロット（ティータイム等）は従来通り
+    const startTimes = loMin !== undefined
+      ? getStartTimesWithLO(slot, loMin)
+      : getStartTimes(slot);
 
-    const timesWithAvailability = filteredTimes.map((time) => {
+    const timesWithAvailability = startTimes.map((time) => {
       const available = isTimeAvailable(
         time,
         guests,
@@ -154,6 +157,19 @@ export async function GET(request: NextRequest) {
   });
 
   return NextResponse.json({ date: dateStr, guests, slots: result });
+}
+
+/** LO時刻を上限として開始時刻一覧を生成（start+90≤endHourの制約を使わない） */
+function getStartTimesWithLO(slot: TimeSlot, loMinutes: number): string[] {
+  const startMin = timeToMinutes(slot.startHour);
+  const endMin = timeToMinutes(slot.endHour);
+  // LO時刻とスロット終了時刻の小さい方を上限とする
+  const upperBound = Math.min(loMinutes, endMin);
+  const times: string[] = [];
+  for (let t = startMin; t <= upperBound; t += 15) {
+    times.push(minutesToTime(t));
+  }
+  return times;
 }
 
 /** 指定時刻が予約可能かを判定（席詳細は返さない） */
